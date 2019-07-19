@@ -14,10 +14,12 @@
 # limitations under the License.
 # ==============================================================================
 
+import random
 import uuid
 
 import pandas as pd
 
+from ludwig.data.dataset_synthesyzer import DATETIME_FORMATS
 from ludwig.data.dataset_synthesyzer import build_synthetic_dataset
 
 ENCODERS = [
@@ -168,3 +170,30 @@ def bag_feature(**kwargs):
     feature.update(kwargs)
 
     return feature
+
+
+def date_feature(**kwargs):
+
+    feature = {
+        'name': 'date_' + random_string(),
+        'type': 'date',
+        'preprocessing': {
+            'datetime_format': random.choice(list(DATETIME_FORMATS.keys()))
+        }
+    }
+
+    feature.update(kwargs)
+
+    return feature
+
+
+def h3_feature(**kwargs):
+    feature = {
+        'name': 'h3_' + random_string(),
+        'type': 'h3'
+    }
+    feature.update(kwargs)
+
+    return feature
+
+
