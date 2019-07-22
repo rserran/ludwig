@@ -476,6 +476,8 @@ optional arguments:
                         raw data file
   -g GROUND_TRUTH, --ground_truth GROUND_TRUTH
                         ground truth file
+  -gts GROUND_TRUTH_SPLIT, --ground_truth_split GROUND_TRUTH_SPLIT
+                       ground truth split - 0:train, 1:validation, 2:test split
   -gm GROUND_TRUTH_METADATA, --ground_truth_metadata GROUND_TRUTH_METADATA
                         input metadata JSON file
   -v {compare_performance,compare_classifiers_performance_from_prob,compare_classifiers_performance_from_pred,compare_classifiers_performance_changing_k,compare_classifiers_performance_subset,compare_classifiers_predictions,compare_classifiers_predictions_distribution,confidence_thresholding,confidence_thresholding_2thresholds_3d,confidence_thresholding_data_vs_acc,confidence_thresholding_2thresholds_2d,confidence_thresholding_data_vs_acc_subset,confidence_thresholding_data_vs_acc_subset_per_class,binary_threshold_vs_metric,roc_curves,roc_curves_from_test_statistics,data_vs_acc_subset,data_vs_acc_subset_per_class,calibration_1_vs_all,calibration_multiclass,confusion_matrix,compare_classifiers_multiclass_multimetric,frequency_vs_f1,learning_curves}, --visualization {compare_performance,compare_classifiers_performance_from_prob,compare_classifiers_performance_from_pred,compare_classifiers_performance_changing_k,compare_classifiers_performance_subset,compare_classifiers_predictions,compare_classifiers_predictions_distribution,confidence_thresholding,confidence_thresholding_2thresholds_3d,confidence_thresholding_data_vs_acc,confidence_thresholding_2thresholds_2d,confidence_thresholding_data_vs_acc_subset,confidence_thresholding_data_vs_acc_subset_per_class,binary_threshold_vs_metric,roc_curves,roc_curves_from_test_statistics,data_vs_acc_subset,data_vs_acc_subset_per_class,calibration_1_vs_all,calibration_multiclass,confusion_matrix,compare_classifiers_multiclass_multimetric,frequency_vs_f1,learning_curves}
@@ -2203,6 +2205,60 @@ There are no time series decoders at the moment (WIP), so time series cannot be 
 
 As no time series decoders are available at the moment, there are also no time series measures.
 
+Audio Features
+--------------
+
+### Audio Features Preprocessing
+
+Ludwig supports reads in audio files using Python's library [SoundFile](https://pypi.org/project/SoundFile/) therefore supporting WAV, FLAC, OGG and MAT files.
+
+-  `in_memory` (default `true`): defines whether image dataset will reside in memory during the training process or will be dynamically fetched from disk (useful for large datasets). In the latter case a training batch of input images will be fetched from disk each training iteration. At the moment only `in_memory` = true is supported.
+- `audio_file_length_limit_in_s`:  (default 5.0) float value that defines the maximum limit of the audio file in seconds. All files longer than this limit are cut off. All files shorter than this limit are padded with `padding_value`
+- `padding_value`: (default 0): float value that is used for padding. 
+- `norm`: (default `null`) the normalization method that can be used for the input data. Supported methods: `null` (data is not normalized), `per_file` (z-norm is applied on a “per file” level)
+- `audio_feature`: (default `{ type: raw }`) dictionary that takes as input the audio feature `type` as well as additional parameters if `type != raw`. The following parameters can/should be defined in the dictionary:
+	- `type` (default `raw`): defines the type of audio features to be used. Supported types at the moment are `raw`, `stft`, `stft_phase`, `group_delay`. For more detail, check [Audio Input Features and Encoders](#audio-input-features-and-encoders).
+	- `window_length_in_s`: defines the window length used for the short time Fourier transformation (only needed if `type != raw`).
+	- `window_shift_in_s`: defines the window shift used for the short time Fourier transformation (also called hop_length) (only needed if `type != raw`).
+	- `num_fft_points`: (default `window_length_in_s * sample_rate` of audio file) defines the number of fft points used for the short time Fourier transformation. If `num_fft_points > window_length_in_s * sample_rate`, then the signal is zero-padded at the end. `num_fft_points` has to be `>= window_length_in_s * sample_rate` (only needed if `type != raw`).
+	- `window_type`: (default `hamming`): defines the type window the signal is weighted before the short time Fourier transformation. All windows provided by [scipy’s window function](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.get_window.html) can be used (only needed if `type != raw`).
+  
+Example of a preprocessing specification (assuming the audio files have a sample rate of 16000):
+```yaml
+name: audio_path
+type: audio
+preprocessing:
+  audio_file_length_limit_in_s: 7.5
+  audio_feature:
+    type: stft
+    window_length_in_s: 0.04
+    window_shift_in_s: 0.02
+    num_fft_points: 800
+    window_type: boxcar
+```
+
+### Audio Input Features and Encoders
+
+Audio files are transformed into one of the following types according to `type` in `audio_feature` in `preprocessing`.
+
+- `raw`: audio file is transformed into a float valued tensor of size `N x L x W` (where `N` is the size of the dataset and `L` corresponds to `audio_file_length_limit_in_s * sample_rate` and `W = 1`).
+- `stft`: audio is transformed to the `stft` magnitude. Audio file is transformed into a float valued tensor of size `N x L x W` (where `N` is the size of the dataset, `L` corresponds to `ceil(audio_file_length_limit_in_s * sample_rate - window_length_in_s * sample_rate + 1/ window_shift_in_s * sample_rate) + 1` and `W` corresponds to `audio_file_length_limit_in_s * sample_rate / 2`).
+- `stft_phase`: the phase information for each stft bin is appended to the `stft` magnitude so that the audio file is transformed into a float valued tensor of size `N x L x 2W` with `N,L,W` being equal to the ones in `stft`.
+- `group_delay`: audio is transformed to group delay features according to Equation (23) in this [paper](https://www.ias.ac.in/article/fulltext/sadh/036/05/0745-0782). Group_delay features has the same tensor size as `stft`.
+
+The encoders are the same used for the [Sequence Features](#sequence-input-features-and-encoders).
+The only difference is that time series features don't have an embedding layer at the beginning, so the `b x s` placeholders (where `b` is the batch size and `s` is the sequence length) are directly mapped to a `b x s x w` (where `w` is `W` as described above) tensor and then passed to the different sequential encoders.
+
+
+### Audio Output Features and Decoders
+
+There are no audio decoders at the moment (WIP), so audio cannot be used as output features.
+
+### Audio Features Measures
+
+As no audio decoders are available at the moment, there are also no audio measures.
+
+
 Image Features
 --------------
 
@@ -2856,7 +2912,7 @@ If the values of `subset` is `predictions`, then only datapoints where the the m
 
 ### compare_classifiers_performance_changing_k
 
-This visualization uses the `top_k`, `ground_truth_metadata`, `field`, `probabilities` and `model_names` parameters.
+This visualization uses the `top_k`, `ground_truth`, `field`, `probabilities` and `model_names` parameters.
 `field` needs to be a category.
 For each model (in the aligned lists of `probabilities` and `model_names`) it produces a line plot that shows the Hits@K measure (that counts a prediction as correct if the model produces it among the first `k`) while changing `k` from 1 to `top_k` for the specified `field`.
 
@@ -2891,7 +2947,7 @@ Compare Classifier Predictions
 
 ### compare_classifiers_predictions
 
-This visualization uses the `ground_truth`, `ground_truth_metadata`, `field`, `predictions` and `model_names` parameters.
+This visualization uses the `ground_truth`, `field`, `predictions` and `model_names` parameters.
 `field` needs to be a category and there must be two and only two models (in the aligned lists of `predictions` and `model_names`).
 This visualization produces a pie chart comparing the predictions of the two models for the specified `field`.
 
@@ -2900,7 +2956,7 @@ This visualization produces a pie chart comparing the predictions of the two mod
 
 ### compare_classifiers_predictions_distribution
 
-This visualization uses the `ground_truth`, `ground_truth_metadata`, `field`, `predictions` and `model_names` parameters.
+This visualization uses the `ground_truth`, `field`, `predictions` and `model_names` parameters.
 `field` needs to be a category.
 This visualization produces a radar plot comparing the distributions of predictions of the models for the first 10 classes of the specified `field`.
 
@@ -2986,10 +3042,9 @@ The third plot shows the max line and the values of the thresholds that obtained
 
 ### confidence_thresholding_2thresholds_3d
 
-This visualization uses the `ground_truth`, `threshold_fields`, `probabilities` and `model_names` parameters.
+This visualization uses the `ground_truth`, `threshold_fields` and `probabilities` parameters.
 `threshold_fields` need to be exactly two, either category or binary.
 `probabilities` need to be exactly two, aligned with `threshold_fields`.
-`model_names` has to be exactly one.
 The plot shows the 3d surfaces displayed by `confidence_thresholding_2thresholds_3d` that have thresholds on the confidence of the predictions of the two `threshold_fields` as x and y axes and either the data coverage percentage or the accuracy as z axis.
 
 ![Confidence_Thresholding two thresholds 3D](images/confidence_thresholding_2thresholds_3d.png "Confidence_Thresholding two thresholds 3D")
@@ -3000,7 +3055,7 @@ Binary Threshold vs. Metric
 
 ### binary_threshold_vs_metric
 
-This visualization uses the `positive_label`, `metrics`, `ground_truth`, `ground_truth_metadata`, `field`, `probabilities` and `model_names` parameters.
+This visualization uses the `positive_label`, `metrics`, `ground_truth`, `field`, `probabilities` and `model_names` parameters.
 `field` can be a category or binary feature.
 For each metric specified in `metrics` (options are `f1`, `precision`, `recall`, `accuracy`), this visualization produces a line chart plotting a threshold on the confidence of the model against the metric for the specified `field`.
 If `field` is a category feature, `positive_label` indicates which is the class to be considered positive class and all the others will be considered negative.
@@ -3014,7 +3069,7 @@ ROC Curves
 
 ### roc_curves
 
-This visualization uses the `positive_label`, `ground_truth`, `ground_truth_metadata`, `field`, `probabilities` and `model_names` parameters.
+This visualization uses the `positive_label`, `ground_truth`, `field`, `probabilities` and `model_names` parameters.
 `field` can be a category or binary feature.
 This visualization produces a line chart plotting the roc curves for the specified `field`.
 If `field` is a category feature, `positive_label` indicates which is the class to be considered positive class and all the others will be considered negative.
