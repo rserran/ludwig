@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2019 Uber Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,22 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-import sys
 import logging
+import sys
 
-from ludwig.globals import LUDWIG_VERSION as __version__
+from ludwig.globals import LUDWIG_VERSION as __version__  # noqa
 
-
-logger = logging.getLogger(__name__)
-# Default logging level for the project
-logger.setLevel(logging.INFO)
-
-# Configure stream handler
-ch = logging.StreamHandler(sys.stdout)
-ch.setLevel(logging.DEBUG)
-
-# Set formatter
-formatter = logging.Formatter('%(message)s')
-ch.setFormatter(formatter)
-
-logger.addHandler(ch)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(message)s")

@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# coding=utf-8
 # Copyright (c) 2019 Uber Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,14 +16,12 @@
 import logging
 
 import numpy as np
-import tensorflow as tf
+import torch
 
-from ludwig.constants import *
-from ludwig.features.base_feature import BaseFeature
-from ludwig.features.base_feature import InputFeature
-from ludwig.models.modules.h3_encoders import H3WeightedSum, H3RNN, H3Embed
+from ludwig.constants import COLUMN, FILL_WITH_CONST, H3, MISSING_VALUE_STRATEGY_OPTIONS, PROC_COLUMN, TIED
+from ludwig.features.base_feature import BaseFeatureMixin, InputFeature
 from ludwig.utils.h3_util import h3_to_components
-from ludwig.utils.misc import set_default_value, get_from_registry
+from ludwig.utils.misc_utils import set_default_value
 
 logger = logging.getLogger(__name__)
 
@@ -33,117 +30,94 @@ H3_VECTOR_LENGTH = MAX_H3_RESOLUTION + 4
 H3_PADDING_VALUE = 7
 
 
-class H3BaseFeature(BaseFeature):
-    def __init__(self, feature):
-        super().__init__(feature)
-        self.type = H3
-
-    preprocessing_defaults = {
-        'missing_value_strategy': FILL_WITH_CONST,
-        'fill_value': 576495936675512319
-        # mode 1 edge 0 resolution 0 base_cell 0
-    }
+class H3FeatureMixin(BaseFeatureMixin):
+    @staticmethod
+    def type():
+        return H3
 
     @staticmethod
-    def get_feature_meta(column, preprocessing_parameters):
+    def preprocessing_defaults():
+        return {
+            "missing_value_strategy": FILL_WITH_CONST,
+            "fill_value": 576495936675512319
+            # mode 1 edge 0 resolution 0 base_cell 0
+        }
+
+    @staticmethod
+    def preprocessing_schema():
+        return {
+            "missing_value_strategy": {"type": "string", "enum": MISSING_VALUE_STRATEGY_OPTIONS},
+            "fill_value": {"type": "integer"},
+            "computed_fill_value": {"type": "integer"},
+        }
+
+    @staticmethod
+    def cast_column(column, backend):
+        # todo: add cast to int64
+        return column
+
+    @staticmethod
+    def get_feature_meta(column, preprocessing_parameters, backend):
         return {}
 
     @staticmethod
     def h3_to_list(h3_int):
         components = h3_to_components(h3_int)
-        header = [
-            components['mode'],
-            components['edge'],
-            components['resolution'],
-            components['base_cell']
-        ]
-        cells_padding = [H3_PADDING_VALUE] * (
-                MAX_H3_RESOLUTION - len(components['cells'])
-        )
-        return header + components['cells'] + cells_padding
+        header = [components["mode"], components["edge"], components["resolution"], components["base_cell"]]
+        cells_padding = [H3_PADDING_VALUE] * (MAX_H3_RESOLUTION - len(components["cells"]))
+        return header + components["cells"] + cells_padding
 
     @staticmethod
     def add_feature_data(
-            feature,
-            dataset_df,
-            data,
-            metadata,
-            preprocessing_parameters=None
+        feature_config, input_df, proc_df, metadata, preprocessing_parameters, backend, skip_save_processed_input
     ):
-        data[feature['name']] = np.array(
-            [H3BaseFeature.h3_to_list(row)
-             for row in dataset_df[feature['name']]], dtype=np.uint8
+        column = input_df[feature_config[COLUMN]]
+        if column.dtype == object:
+            column = column.map(int)
+        column = column.map(H3FeatureMixin.h3_to_list)
+
+        proc_df[feature_config[PROC_COLUMN]] = backend.df_engine.map_objects(
+            column, lambda x: np.array(x, dtype=np.uint8)
         )
+        return proc_df
 
 
-class H3InputFeature(H3BaseFeature, InputFeature):
-    def __init__(self, feature):
+class H3InputFeature(H3FeatureMixin, InputFeature):
+    encoder = "embed"
+
+    def __init__(self, feature, encoder_obj=None):
         super().__init__(feature)
+        self.overwrite_defaults(feature)
+        if encoder_obj:
+            self.encoder_obj = encoder_obj
+        else:
+            self.encoder_obj = self.initialize_encoder(feature)
 
-        self.encoder = 'embed'
+    def forward(self, inputs):
+        assert isinstance(inputs, torch.Tensor)
+        assert inputs.dtype in [torch.uint8, torch.int64]
+        assert len(inputs.shape) == 2
 
-        encoder_parameters = self.overwrite_defaults(feature)
+        inputs_encoded = self.encoder_obj(inputs)
 
-        self.encoder_obj = self.get_h3_encoder(encoder_parameters)
+        return inputs_encoded
 
-    def get_h3_encoder(self, encoder_parameters):
-        return get_from_registry(
-            self.encoder, h3_encoder_registry)(
-            **encoder_parameters
-        )
+    @property
+    def input_dtype(self):
+        return torch.uint8
 
-    def _get_input_placeholder(self):
-        # None dimension is for dealing with variable batch size
-        return tf.placeholder(
-            tf.int32,
-            shape=[None, H3_VECTOR_LENGTH],
-            name=self.name
-        )
+    @property
+    def input_shape(self) -> torch.Size:
+        return torch.Size([H3_VECTOR_LENGTH])
 
-    def build_input(
-            self,
-            regularizer,
-            dropout_rate,
-            is_training=False,
-            **kwargs
-    ):
-        placeholder = self._get_input_placeholder()
-        logger.debug('placeholder: {0}'.format(placeholder))
-
-        feature_representation, feature_representation_size = self.encoder_obj(
-            placeholder,
-            regularizer=regularizer,
-            dropout_rate=dropout_rate,
-            is_training=is_training
-        )
-        logging.debug('  feature_representation: {0}'.format(
-            feature_representation))
-
-        feature_representation = {
-            'name': self.name,
-            'type': self.type,
-            'representation': feature_representation,
-            'size': feature_representation_size,
-            'placeholder': placeholder
-        }
-        return feature_representation
+    @property
+    def output_shape(self) -> torch.Size:
+        return self.encoder_obj.output_shape
 
     @staticmethod
-    def update_model_definition_with_metadata(
-            input_feature,
-            feature_metadata,
-            *args,
-            **kwargs
-    ):
+    def update_config_with_metadata(input_feature, feature_metadata, *args, **kwargs):
         pass
 
     @staticmethod
     def populate_defaults(input_feature):
-        set_default_value(input_feature, 'tied_weights', None)
-
-
-h3_encoder_registry = {
-    'embed': H3Embed,
-    'weighted_sum': H3WeightedSum,
-    'rnn': H3RNN
-}
+        set_default_value(input_feature, TIED, None)

@@ -1,5 +1,4 @@
 #! /usr/bin/env python
-# coding=utf-8
 # Copyright (c) 2019 Uber Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,400 +14,288 @@
 # limitations under the License.
 # ==============================================================================
 import logging
-import os
-from collections import OrderedDict
+from typing import Any, Dict
 
 import numpy as np
-import tensorflow as tf
+import torch
 
-from ludwig.constants import *
-from ludwig.features.base_feature import BaseFeature
-from ludwig.features.base_feature import InputFeature
-from ludwig.features.base_feature import OutputFeature
+from ludwig.constants import (
+    COLUMN,
+    FILL_WITH_CONST,
+    HIDDEN,
+    JACCARD,
+    LOGITS,
+    LOSS,
+    MISSING_VALUE_STRATEGY_OPTIONS,
+    NAME,
+    PREDICTIONS,
+    PROBABILITIES,
+    PROC_COLUMN,
+    SET,
+    SIGMOID_CROSS_ENTROPY,
+    SUM,
+    TIED,
+    TYPE,
+)
+from ludwig.features.base_feature import BaseFeatureMixin, InputFeature, OutputFeature, PredictModule
 from ludwig.features.feature_utils import set_str_to_idx
-from ludwig.models.modules.embedding_modules import EmbedSparse
-from ludwig.models.modules.initializer_modules import get_initializer
-from ludwig.utils.misc import set_default_value
-from ludwig.utils.strings_utils import create_vocabulary
-
+from ludwig.utils import output_feature_utils
+from ludwig.utils.misc_utils import set_default_value
+from ludwig.utils.strings_utils import create_vocabulary, tokenizer_registry, UNKNOWN_SYMBOL
 
 logger = logging.getLogger(__name__)
 
 
-class SetBaseFeature(BaseFeature):
-    def __init__(self, feature):
-        super().__init__(feature)
-        self.type = IMAGE
+class _SetPredict(PredictModule):
+    def __init__(self, threshold):
+        super().__init__()
+        self.threshold = threshold
 
-    preprocessing_defaults = {
-        'format': 'space',
-        'most_common': 10000,
-        'lowercase': False,
-        'missing_value_strategy': FILL_WITH_CONST,
-        'fill_value': ''
-    }
+    def forward(self, inputs: Dict[str, torch.Tensor], feature_name: str) -> Dict[str, torch.Tensor]:
+        logits = output_feature_utils.get_output_feature_tensor(inputs, feature_name, self.logits_key)
+        probabilities = torch.sigmoid(logits)
+
+        predictions = torch.greater_equal(probabilities, self.threshold)
+        predictions = predictions.type(torch.int64)
+
+        return {self.predictions_key: predictions, self.probabilities_key: probabilities, self.logits_key: logits}
+
+
+class SetFeatureMixin(BaseFeatureMixin):
+    @staticmethod
+    def type():
+        return SET
 
     @staticmethod
-    def get_feature_meta(column, preprocessing_parameters):
-        idx2str, str2idx, str2freq, max_size = create_vocabulary(
-            column,
-            preprocessing_parameters['format'],
-            num_most_frequent=preprocessing_parameters['most_common'],
-            lowercase=preprocessing_parameters['lowercase']
-        )
+    def preprocessing_defaults():
         return {
-            'idx2str': idx2str,
-            'str2idx': str2idx,
-            'str2freq': str2freq,
-            'vocab_size': len(str2idx),
-            'max_set_size': max_size
+            "tokenizer": "space",
+            "most_common": 10000,
+            "lowercase": False,
+            "missing_value_strategy": FILL_WITH_CONST,
+            "fill_value": UNKNOWN_SYMBOL,
         }
 
     @staticmethod
-    def feature_data(column, metadata, preprocessing_parameters):
-        feature_vector = np.array(
-            column.map(
-                lambda x: set_str_to_idx(
-                    x,
-                    metadata['str2idx'],
-                    preprocessing_parameters['format']
-                )
-            )
+    def preprocessing_schema():
+        return {
+            "tokenizer": {"type": "string", "enum": sorted(list(tokenizer_registry.keys()))},
+            "most_common": {"type": "integer", "minimum": 0},
+            "lowercase": {"type": "boolean"},
+            "missing_value_strategy": {"type": "string", "enum": MISSING_VALUE_STRATEGY_OPTIONS},
+            "fill_value": {"type": "string"},
+            "computed_fill_value": {"type": "string"},
+        }
+
+    @staticmethod
+    def cast_column(column, backend):
+        return column
+
+    @staticmethod
+    def get_feature_meta(column, preprocessing_parameters, backend):
+        column = column.astype(str)
+        idx2str, str2idx, str2freq, max_size, _, _, _, _ = create_vocabulary(
+            column,
+            preprocessing_parameters["tokenizer"],
+            num_most_frequent=preprocessing_parameters["most_common"],
+            lowercase=preprocessing_parameters["lowercase"],
+            add_special_symbols=False,
+            processor=backend.df_engine,
         )
+        return {
+            "idx2str": idx2str,
+            "str2idx": str2idx,
+            "str2freq": str2freq,
+            "vocab_size": len(str2idx),
+            "max_set_size": max_size,
+        }
 
-        set_matrix = np.zeros(
-            (len(column),
-             len(metadata['str2idx'])),
-            dtype=bool
-        )
+    @staticmethod
+    def feature_data(column, metadata, preprocessing_parameters, backend):
+        def to_dense(x):
+            feature_vector = set_str_to_idx(x, metadata["str2idx"], preprocessing_parameters["tokenizer"])
 
-        for i in range(len(column)):
-            set_matrix[i, feature_vector[i]] = 1
+            set_vector = np.zeros((len(metadata["str2idx"]),))
+            set_vector[feature_vector] = 1
+            return set_vector.astype(np.bool)
 
-        return set_matrix
+        return backend.df_engine.map_objects(column, to_dense)
 
     @staticmethod
     def add_feature_data(
-            feature,
-            dataset_df,
-            data,
-            metadata,
+        feature_config, input_df, proc_df, metadata, preprocessing_parameters, backend, skip_save_processed_input
+    ):
+        proc_df[feature_config[PROC_COLUMN]] = SetFeatureMixin.feature_data(
+            input_df[feature_config[COLUMN]].astype(str),
+            metadata[feature_config[NAME]],
             preprocessing_parameters,
-    ):
-        data[feature['name']] = SetBaseFeature.feature_data(
-            dataset_df[feature['name']].astype(str),
-            metadata[feature['name']],
-            preprocessing_parameters
+            backend,
         )
+        return proc_df
 
 
-class SetInputFeature(SetBaseFeature, InputFeature):
-    def __init__(self, feature):
+class SetInputFeature(SetFeatureMixin, InputFeature):
+    encoder = "embed"
+    vocab = []
+
+    def __init__(self, feature, encoder_obj=None):
         super().__init__(feature)
+        self.overwrite_defaults(feature)
+        if encoder_obj:
+            self.encoder_obj = encoder_obj
+        else:
+            self.encoder_obj = self.initialize_encoder(feature)
 
-        self.vocab = []
-        self.embedding_size = 50
-        self.representation = 'dense'
-        self.embeddings_trainable = True
-        self.pretrained_embeddings = None
-        self.embeddings_on_cpu = False
-        self.dropout = False
-        self.initializer = None
-        self.regularize = True
+    def forward(self, inputs):
+        assert isinstance(inputs, torch.Tensor)
+        assert inputs.dtype in [torch.bool, torch.int64]
 
-        _ = self.overwrite_defaults(feature)
+        encoder_output = self.encoder_obj(inputs)
 
-        self.embed_sparse = EmbedSparse(
-            self.vocab,
-            self.embedding_size,
-            representation=self.representation,
-            embeddings_trainable=self.embeddings_trainable,
-            pretrained_embeddings=self.pretrained_embeddings,
-            embeddings_on_cpu=self.embeddings_on_cpu,
-            dropout=self.dropout,
-            initializer=self.initializer,
-            regularize=self.regularize
-        )
+        return {"encoder_output": encoder_output}
 
-    def _get_input_placeholder(self):
-        # None is for dealing with variable batch size
-        return tf.placeholder(
-            tf.int32,
-            shape=[None, len(self.vocab)],
-            name=self.name
-        )
+    @property
+    def input_dtype(self):
+        return torch.bool
 
-    def build_input(
-            self,
-            regularizer,
-            dropout_rate,
-            is_training=False,
-            **kwargs
-    ):
-        placeholder = self._get_input_placeholder()
-        logger.debug('  placeholder: {0}'.format(placeholder))
-
-        embedded, embedding_size = self.embed_sparse(
-            placeholder,
-            regularizer,
-            dropout_rate,
-            is_training=is_training
-        )
-        logger.debug('  feature_representation: {0}'.format(embedded))
-
-        feature_representation = {
-            'name': self.name,
-            'type': self.type,
-            'representation': embedded,
-            'size': embedding_size,
-            'placeholder': placeholder
-        }
-
-        return feature_representation
+    @property
+    def input_shape(self) -> torch.Size:
+        return torch.Size([len(self.vocab)])
 
     @staticmethod
-    def update_model_definition_with_metadata(
-            input_feature,
-            feature_metadata,
-            *args,
-            **kwargs
-    ):
-        input_feature['vocab'] = feature_metadata['idx2str']
+    def update_config_with_metadata(input_feature, feature_metadata, *args, **kwargs):
+        input_feature["vocab"] = feature_metadata["idx2str"]
 
     @staticmethod
     def populate_defaults(input_feature):
-        set_default_value(input_feature, 'tied_weights', None)
+        set_default_value(input_feature, TIED, None)
+
+    @property
+    def output_shape(self) -> torch.Size:
+        return self.encoder_obj.output_shape
 
 
-class SetOutputFeature(SetBaseFeature, OutputFeature):
-    def __init__(self, feature):
-        super().__init__(feature)
-        self.type = SET
+class SetOutputFeature(SetFeatureMixin, OutputFeature):
+    decoder = "classifier"
+    loss = {TYPE: SIGMOID_CROSS_ENTROPY}
+    metric_functions = {LOSS: None, JACCARD: None}
+    default_validation_metric = JACCARD
+    num_classes = 0
+    threshold = 0.5
 
-        self.loss = {'type': 'sigmoid_cross_entropy'}
-        self.num_classes = 0
-        self.threshold = 0.5
-        self.initializer = None
-        self.regularize = True
+    def __init__(self, feature, output_features: Dict[str, OutputFeature]):
+        super().__init__(feature, output_features)
+        self.overwrite_defaults(feature)
+        self.decoder_obj = self.initialize_decoder(feature)
+        self._setup_loss()
+        self._setup_metrics()
 
-        _ = self.overwrite_defaults(feature)
+    def logits(self, inputs, **kwargs):  # hidden
+        hidden = inputs[HIDDEN]
+        return self.decoder_obj(hidden)
 
-    def _get_output_placeholder(self):
-        return tf.placeholder(
-            tf.bool,
-            shape=[None, self.num_classes],
-            name='{}_placeholder'.format(self.name)
-        )
+    def loss_kwargs(self):
+        return self.loss
 
-    def _get_predictions(
-            self,
-            hidden,
-            hidden_size,
-            regularizer=None
-    ):
-        if not self.regularize:
-            regularizer = None
+    def metric_kwargs(self) -> Dict[str, Any]:
+        return {"threshold": self.threshold}
 
-        with tf.variable_scope('predictions_{}'.format(self.name)):
-            initializer_obj = get_initializer(self.initializer)
-            weights = tf.get_variable(
-                'weights',
-                initializer=initializer_obj([hidden_size, self.num_classes]),
-                regularizer=regularizer
-            )
-            logger.debug('  class_weights: {0}'.format(weights))
+    def create_predict_module(self) -> PredictModule:
+        return _SetPredict(self.threshold)
 
-            biases = tf.get_variable(
-                'biases',
-                [self.num_classes]
-            )
-            logger.debug('  class_biases: {0}'.format(biases))
+    def get_prediction_set(self):
+        return {PREDICTIONS, PROBABILITIES, LOGITS}
 
-            logits = tf.matmul(hidden, weights) + biases
-            logger.debug('  logits: {0}'.format(logits))
+    @classmethod
+    def get_output_dtype(cls):
+        return torch.bool
 
-            probabilities = tf.nn.sigmoid(
-                logits,
-                name='probabilities_{}'.format(self.name)
-            )
+    @property
+    def input_shape(self) -> torch.Size:
+        return self.decoder_obj.input_shape
 
-            predictions = tf.greater_equal(
-                probabilities,
-                self.threshold,
-                name='predictions_{}'.format(self.name)
-            )
-
-        return predictions, probabilities, logits
-
-    def _get_loss(
-            self,
-            targets,
-            logits
-    ):
-        with tf.variable_scope('loss_{}'.format(self.name)):
-            train_loss = tf.nn.sigmoid_cross_entropy_with_logits(
-                labels=tf.cast(targets, tf.float32),
-                logits=logits
-            )
-            train_loss = tf.reduce_sum(train_loss, axis=1)
-
-            train_mean_loss = tf.reduce_mean(
-                train_loss,
-                name='train_mean_loss_{}'.format(self.name)
-            )
-
-        return train_mean_loss, train_loss
-
-    def _get_measures(self, targets, predictions):
-        intersection = tf.reduce_sum(
-            tf.cast(tf.logical_and(targets, predictions), tf.float32),
-            axis=1
-        )
-        union = tf.reduce_sum(
-            tf.cast(tf.logical_or(targets, predictions), tf.float32),
-            axis=1
-        )
-        jaccard_index = intersection / union
-
-        return jaccard_index
-
-    def build_output(
-            self,
-            hidden,
-            hidden_size,
-            regularizer=None,
-            **kwargs
-    ):
-        output_tensors = {}
-
-        # ================ Placeholder ================
-        targets = self._get_output_placeholder()
-        output_tensors[self.name] = targets
-        logger.debug('  targets_placeholder: {0}'.format(targets))
-
-        # ================ Predictions ================
-        ppl = self._get_predictions(
-            hidden,
-            hidden_size,
-            regularizer=regularizer
-        )
-        predictions, probabilities, logits = ppl
-
-        jaccard_index = self._get_measures(targets, predictions)
-
-        output_tensors[PREDICTIONS + '_' + self.name] = predictions
-        output_tensors[PROBABILITIES + '_' + self.name] = probabilities
-        output_tensors[JACCARD + '_' + self.name] = jaccard_index
-
-        # ================ Loss (Binary Cross Entropy) ================
-        train_mean_loss, eval_loss = self._get_loss(targets, logits)
-
-        output_tensors[EVAL_LOSS + '_' + self.name] = eval_loss
-        output_tensors[TRAIN_MEAN_LOSS + '_' + self.name] = train_mean_loss
-
-        tf.summary.scalar(
-            'train_mean_loss_{}'.format(self.name),
-            train_mean_loss
-        )
-
-        return train_mean_loss, eval_loss, output_tensors
-
-    default_validation_measure = JACCARD
-
-    output_config = OrderedDict([
-        (LOSS, {
-            'output': EVAL_LOSS,
-            'aggregation': SUM,
-            'value': 0,
-            'type': MEASURE
-        }),
-        (JACCARD, {
-            'output': JACCARD,
-            'aggregation': SUM,
-            'value': 0,
-            'type': MEASURE
-        }),
-        (PREDICTIONS, {
-            'output': PREDICTIONS,
-            'aggregation': APPEND,
-            'value': [],
-            'type': PREDICTION
-        }),
-        (PROBABILITIES, {
-            'output': PROBABILITIES,
-            'aggregation': APPEND,
-            'value': [],
-            'type': PREDICTION
-        })
-    ])
+    @property
+    def output_shape(self) -> torch.Size:
+        return torch.Size([self.num_classes])
 
     @staticmethod
-    def update_model_definition_with_metadata(
-            output_feature,
-            feature_metadata,
-            *args,
-            **kwargs
-    ):
-        output_feature[LOSS]['type'] = None
-        output_feature['num_classes'] = feature_metadata['vocab_size']
+    def update_config_with_metadata(output_feature, feature_metadata, *args, **kwargs):
+        output_feature["num_classes"] = feature_metadata["vocab_size"]
+        if isinstance(output_feature[LOSS]["class_weights"], (list, tuple)):
+            if len(output_feature[LOSS]["class_weights"]) != output_feature["num_classes"]:
+                raise ValueError(
+                    "The length of class_weights ({}) is not compatible with "
+                    "the number of classes ({}) for feature {}. "
+                    "Check the metadata JSON file to see the classes "
+                    "and their order and consider there needs to be a weight "
+                    "for the <UNK> and <PAD> class too.".format(
+                        len(output_feature[LOSS]["class_weights"]), output_feature["num_classes"], output_feature[NAME]
+                    )
+                )
 
-    @staticmethod
-    def calculate_overall_stats(
-            test_stats,
-            output_feature,
-            dataset,
-            train_set_metadata
-    ):
-        pass
-
-    @staticmethod
-    def postprocess_results(
-            output_feature,
-            result,
-            metadata,
-            experiment_dir_name,
-            skip_save_unprocessed_output=False
-    ):
-        postprocessed = {}
-        npy_filename = os.path.join(experiment_dir_name, '{}_{}.npy')
-        name = output_feature['name']
-
-        if PREDICTIONS in result and len(result[PREDICTIONS]) > 0:
-            preds = result[PREDICTIONS]
-            if 'idx2str' in metadata:
-                postprocessed[PREDICTIONS] = [
-                    [metadata['idx2str'][i] for i, pred in enumerate(pred_set)
-                     if pred == True] for pred_set in preds
-                ]
+        if isinstance(output_feature[LOSS]["class_weights"], dict):
+            if feature_metadata["str2idx"].keys() != output_feature[LOSS]["class_weights"].keys():
+                raise ValueError(
+                    "The class_weights keys ({}) are not compatible with "
+                    "the classes ({}) of feature {}. "
+                    "Check the metadata JSON file to see the classes "
+                    "and consider there needs to be a weight "
+                    "for the <UNK> and <PAD> class too.".format(
+                        output_feature[LOSS]["class_weights"].keys(),
+                        feature_metadata["str2idx"].keys(),
+                        output_feature[NAME],
+                    )
+                )
             else:
-                postprocessed[PREDICTIONS] = preds
+                class_weights = output_feature[LOSS]["class_weights"]
+                idx2str = feature_metadata["idx2str"]
+                class_weights_list = [class_weights[s] for s in idx2str]
+                output_feature[LOSS]["class_weights"] = class_weights_list
 
-            if not skip_save_unprocessed_output:
-                np.save(npy_filename.format(name, PREDICTIONS), preds)
+    @staticmethod
+    def calculate_overall_stats(predictions, targets, train_set_metadata):
+        # no overall stats, just return empty dictionary
+        return {}
 
-            del result[PREDICTIONS]
+    def postprocess_predictions(
+        self,
+        result,
+        metadata,
+        output_directory,
+        backend,
+    ):
+        predictions_col = f"{self.feature_name}_{PREDICTIONS}"
+        if predictions_col in result:
 
-        if PROBABILITIES in result and len(result[PROBABILITIES]) > 0:
-            probs = result[PROBABILITIES]
-            prob = [[prob for prob in prob_set if
-                     prob >= output_feature['threshold']] for prob_set in probs]
-            postprocessed[PROBABILITIES] = probs
-            postprocessed['probability'] = prob
+            def idx2str(pred_set):
+                return [metadata["idx2str"][i] for i, pred in enumerate(pred_set) if pred]
 
-            if not skip_save_unprocessed_output:
-                np.save(npy_filename.format(name, PROBABILITIES), probs)
-                np.save(npy_filename.format(name, 'probability'), probs)
+            result[predictions_col] = backend.df_engine.map_objects(
+                result[predictions_col],
+                idx2str,
+            )
 
-            del result[PROBABILITIES]
+        probabilities_col = f"{self.feature_name}_{PROBABILITIES}"
+        if probabilities_col in result:
+            threshold = self.threshold
 
-        return postprocessed
+            def get_prob(prob_set):
+                return [prob for prob in prob_set if prob >= threshold]
+
+            result[probabilities_col] = backend.df_engine.map_objects(
+                result[probabilities_col],
+                get_prob,
+            )
+
+        return result
 
     @staticmethod
     def populate_defaults(output_feature):
-        set_default_value(output_feature, LOSS, {'weight': 1, 'type': None})
-        set_default_value(output_feature[LOSS], 'weight', 1)
+        set_default_value(output_feature, LOSS, {TYPE: SIGMOID_CROSS_ENTROPY, "weight": 1})
+        set_default_value(output_feature[LOSS], "weight", 1)
+        set_default_value(output_feature[LOSS], "class_weights", None)
 
-        set_default_value(output_feature, 'threshold', 0.5)
-        set_default_value(output_feature, 'dependencies', [])
-        set_default_value(output_feature, 'reduce_input', SUM)
-        set_default_value(output_feature, 'reduce_dependencies', SUM)
+        set_default_value(output_feature, "threshold", 0.5)
+        set_default_value(output_feature, "dependencies", [])
+        set_default_value(output_feature, "reduce_input", SUM)
+        set_default_value(output_feature, "reduce_dependencies", SUM)

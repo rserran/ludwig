@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2019 Uber Technologies, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,54 +12,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-
 import os
+import tempfile
 import uuid
 
 import pytest
 
-from ludwig.utils.data_utils import replace_file_extension
+from ludwig.constants import TRAINER
+from ludwig.hyperopt.run import hyperopt
+from tests.integration_tests.utils import category_feature, generate_data, text_feature
+
 
 @pytest.fixture()
 def csv_filename():
-    """
-    This methods returns a random filename for the tests to use for generating
-    temporary data. After the data is used, all the temporary data is deleted.
-    :return: None
-    """
-    csv_filename = uuid.uuid4().hex[:10].upper() + '.csv'
-    yield csv_filename
+    """Yields a csv filename for holding temporary data."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        csv_filename = os.path.join(tmpdir, uuid.uuid4().hex[:10].upper() + ".csv")
+        yield csv_filename
 
-    delete_temporary_data(csv_filename)
 
 @pytest.fixture()
 def yaml_filename():
-    """
-    This methods returns a random filename for the tests to use for generating
-    a model definition file. After the test runs, this file will be deleted
-    :return: None
-    """
-    yaml_filename = 'model_def_' + uuid.uuid4().hex[:10].upper() + '.yaml'
-    yield yaml_filename
-
-    if os.path.exists(yaml_filename):
-        os.remove(yaml_filename)
+    """Yields a yaml filename for holding a temporary config."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yaml_filename = os.path.join(tmpdir, "model_def_" + uuid.uuid4().hex[:10].upper() + ".yaml")
+        yield yaml_filename
 
 
-def delete_temporary_data(csv_path):
-    """
-    Helper method to delete temporary data created for running tests. Deletes
-    the csv and hdf5/json data (if any)
-    :param csv_path: path to the csv data file
-    :return: None
-    """
-    if os.path.isfile(csv_path):
-        os.remove(csv_path)
+@pytest.fixture(scope="module")
+def hyperopt_results():
+    """This function generates hyperopt results."""
+    input_features = [
+        text_feature(name="utterance", cell_type="lstm", reduce_output="sum"),
+        category_feature(vocab_size=2, reduce_input="sum"),
+    ]
 
-    json_path = replace_file_extension(csv_path, 'json')
-    if os.path.isfile(json_path):
-        os.remove(json_path)
+    output_features = [category_feature(vocab_size=2, reduce_input="sum")]
 
-    hdf5_path = replace_file_extension(csv_path, 'hdf5')
-    if os.path.isfile(hdf5_path):
-        os.remove(hdf5_path)
+    csv_filename = uuid.uuid4().hex[:10].upper() + ".csv"
+    rel_path = generate_data(input_features, output_features, csv_filename)
+
+    config = {
+        "input_features": input_features,
+        "output_features": output_features,
+        "combiner": {"type": "concat", "num_fc_layers": 2},
+        TRAINER: {"epochs": 2, "learning_rate": 0.001},
+    }
+
+    output_feature_name = output_features[0]["name"]
+
+    hyperopt_configs = {
+        "parameters": {
+            "trainer.learning_rate": {
+                "type": "float",
+                "low": 0.0001,
+                "high": 0.01,
+                "space": "log",
+                "steps": 3,
+            },
+            output_feature_name + ".output_size": {"type": "int", "low": 32, "high": 256, "steps": 5},
+            output_feature_name + ".num_fc_layers": {"type": "int", "low": 1, "high": 5, "space": "linear", "steps": 4},
+        },
+        "goal": "minimize",
+        "output_feature": output_feature_name,
+        "validation_metrics": "loss",
+        "executor": {"type": "serial"},
+        "sampler": {"type": "random", "num_samples": 2},
+    }
+
+    # add hyperopt parameter space to the config
+    config["hyperopt"] = hyperopt_configs
+
+    hyperopt(config, dataset=rel_path, output_directory="results")
+
+    return os.path.abspath("results")

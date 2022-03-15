@@ -1,102 +1,116 @@
-Ludwig
-======
+![Ludwig logo](https://github.com/ludwig-ai/ludwig-docs/raw/master/docs/images/ludwig_hero.png "Ludwig logo")
 
-Introduction
-------------
+<div align="center">
 
-Ludwig is a toolbox built on top of TensorFlow that allows to train and test deep learning models without the need to write code.
+[![PyPI version](https://badge.fury.io/py/ludwig.svg)](https://badge.fury.io/py/ludwig)
+[![Build Status](https://github.com/ludwig-ai/ludwig/actions/workflows/pytest.yml/badge.svg)](https://github.com/ludwig-ai/ludwig/actions/workflows/pytest.yml)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/4210/badge)](https://bestpractices.coreinfrastructure.org/projects/4210)
+[![Slack](https://img.shields.io/badge/slack-chat-green.svg?logo=slack)](https://join.slack.com/t/ludwig-ai/shared_invite/zt-mrxo87w6-DlX5~73T2B4v_g6jj0pJcQ)
 
-All you need to provide is a CSV file containing your data, a list of columns to use as inputs, and a list of columns to use as outputs, Ludwig will do the rest.
-Simple commands can be used to train models both locally and in a distributed way, and to use them to predict on new data.
+[![DockerHub](https://img.shields.io/docker/pulls/ludwigai/ludwig.svg)](https://hub.docker.com/r/ludwigai)
+[![Downloads](https://pepy.tech/badge/ludwig)](https://pepy.tech/project/ludwig)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/ludwig-ai/ludwig/blob/master/LICENSE)
+[![Twitter](https://img.shields.io/twitter/follow/ludwig_ai.svg?style=social&logo=twitter)](https://twitter.com/ludwig_ai)
 
-A programmatic API is also available in order to use Ludwig from your python code.
-A suite of visualization tools allows you to analyze and compare models' training and test performance.
+</div>
 
-Ludwig is built with extensibility principles in mind and is based on data type abstractions, making it easy to add support for new data types as well as new model architectures.
+Translated in [🇰🇷 Korean](README_KR.md)/
 
-It can be used by practitioners to quickly train and test deep learning models as well as by researchers to obtain strong baselines to compare against and have an experimentation setting that ensures comparability by performing standard data preprocessing and visualization.
+Ludwig is a data-centric deep learning framework that allows users to train and test deep learning models by specifying a declarative configuration that matches the schema of the data.
+It is built on top of PyTorch.
 
-Ludwig provides a set of model architectures that can be combined together to create an end-to-end model for a given use case. As an analogy, if deep learning libraries provide the building blocks to make your building, Ludwig provides the buildings to make your city, and you can choose among the available buildings or add your own building to the set of available ones.
+To train a model all you need to provide is a file containing your data, a list of columns to use as inputs, and a list of columns to use as outputs, Ludwig will do the rest.
+Simple commands can be used to train models both locally and in a distributed way, and to use them to predict new data.
 
-The core design principles we baked into the toolbox are:
+A programmatic API is also available to use Ludwig from Python.
+A suite of visualization tools allows you to analyze models' training and test performance and to compare them.
+
+Ludwig is built with extensibility principles in mind and is based on datatype abstractions, making it easy to add support for new datatypes as well as new model architectures.
+
+It can be used by practitioners to quickly train and test deep learning models as well as by researchers to obtain strong baselines to compare against and have an experimentation setting that ensures comparability by performing the same data processing and evaluation.
+
+Ludwig provides a set of model architectures that can be combined together to create an end-to-end model for a given use case.
+As an analogy, if deep learning libraries provide the building blocks to make your building, Ludwig provides the buildings to make your city, and you can choose among the available buildings or add your own building to the set of available ones.
+
+The core design principles baked into the toolbox are:
+
 - No coding required: no coding skills are required to train a model and use it for obtaining predictions.
-- Generality: a new data type-based approach to deep learning model design that makes the tool usable across many different use cases.
+- Generality: a new datatype-based approach to deep learning model design makes the tool usable across many different use cases.
 - Flexibility: experienced users have extensive control over model building and training, while newcomers will find it easy to use.
-- Extensibility: easy to add new model architecture and new feature data types.
-- Understandability: deep learning model internals are often considered black boxes, but we provide standard visualizations to understand their performance and compare their predictions.
+- Extensibility: easy to add new model architecture and new feature datatypes.
+- Understandability: deep learning model internals are often considered black boxes, but Ludwig provides standard visualizations to understand their performance and compare their predictions.
 - Open Source: Apache License 2.0
 
+<p><img src="https://raw.githubusercontent.com/lfai/artwork/master/lfaidata-assets/lfaidata/horizontal/color/lfaidata-horizontal-color.png" alt="LF AI & Data logo" width="200"/></p>
 
-Installation
-------------
+Ludwig is hosted by the Linux Foundation as part of the [LF AI & Data Foundation](https://lfaidata.foundation/). For details
+about who's involved and how Ludwig fits into the larger open source AI landscape,
+read the Linux Foundation [announcement](https://lfaidata.foundation/blog/2020/12/17/ludwig-joins-lf-ai--data-as-new-incubation-project/).
 
-Ludwig's requirements are the following:
+# Installation
 
-- numpy
-- pandas
-- scipy
-- scikit-learn
-- scikit-image
-- spacy
-- tensorflow
-- matplotlib
-- seaborn
-- Cython
-- h5py
-- tqdm
-- tabulate
-- PyYAML
-
-Ludwig has been developed and tested with Python 3 in mind.
+Ludwig requires you to use Python 3.6+.
 If you don’t have Python 3 installed, install it by running:
 
 ```
 sudo apt install python3  # on ubuntu
 brew install python3      # on mac
 ```
+
 You may want to use a virtual environment to maintain an isolated [Python environment](https://docs.python-guide.org/dev/virtualenvs/).
+
+```
+virtualenv -p python3 venv && source venv/bin/activate
+```
 
 In order to install Ludwig just run:
 
 ```
 pip install ludwig
-python -m spacy download en
 ```
 
-or install it by building the source code from the repository:
+This will install only Ludwig's basic requirements, different feature types require different dependencies.
+We divided them as different extras so that users could install only the ones they actually need:
+
+- `ludwig[text]` for text dependencies.
+- `ludwig[audio]` for audio and speech dependencies.
+- `ludwig[image]` for image dependencies.
+- `ludwig[hyperopt]` for hyperparameter optimization dependencies.
+- `ludwig[horovod]` for distributed training dependencies.
+- `ludwig[serve]` for serving dependencies.
+- `ludwig[viz]` for visualization dependencies.
+- `ludwig[test]` for dependencies needed for testing.
+
+Distributed training is supported with [Horovod](https://github.com/horovod/horovod), which can be installed with `pip install ludwig[horovod]` or `HOROVOD_GPU_OPERATIONS=NCCL pip install ludwig[horovod]` for GPU support.
+See Horovod's [installation guide](https://horovod.readthedocs.io/en/stable/install_include.html)  for full details on available installation options.
+
+Any combination of extra packages can be installed at the same time with `pip install ludwig[extra1,extra2,...]` like for instance `pip install ludwig[text,viz]`.
+The full set of dependencies can be installed with `pip install ludwig[full]`.
+
+For developers who wish to build the source code from the repository:
 
 ```
-git clone https://github.com/uber/ludwig.git
+git clone git@github.com:ludwig-ai/ludwig.git
 cd ludwig
 virtualenv -p python3 venv
 source venv/bin/activate
-pip install -r requirements.txt
-python -m spacy download en
-python setup.py install
+pip install -e '.[test]'
 ```
 
-Beware that in the `requirements.txt` file the `tensorflow` package is the regular one, not the GPU enabled one.
-To install the GPU enabled one replace it with `tensorflow-gpu`.
+## Basic Principles
 
-If you want to train Ludwig models in a distributed way, you need to also install the `horovod` and the `mpi4py` packages.
-Please follow the instructions on [Horovod's repository](https://github.com/uber/horovod) to install it.
+Ludwig provides three main functionalities: training models and using them to predict and evaluate them.
+It is based on datatype abstraction, so that the same data preprocessing and postprocessing will be performed on different datasets that share datatypes and the same encoding and decoding models developed can be re-used across several tasks.
 
+Training a model in Ludwig is pretty straightforward: you provide a dataset file and a config YAML file.
 
-Basic Principles
-----------------
-
-Ludwig provides two main functionalities: training models and using them to predict.
-It is based on datatype abstraction, so that the same data preprocessing and postprocessing will be performed on different datasets that share data types and the same encoding and decoding models developed for one task can be reused for different tasks.
-
-Training a model in Ludwig is pretty straightforward: you provide a CSV dataset and a model definition YAML file.
-
-The model definition contains a list of input features and output features, all you have to do is specify names of the columns in the CSV that are inputs to your model alongside with their datatypes, and names of columns in the CSV that will be outputs, the target variables which the model will learn to predict.
+The config contains a list of input features and output features, all you have to do is specify names of the columns in the dataset that are inputs to your model alongside with their datatypes, and names of columns in the dataset that will be outputs, the target variables which the model will learn to predict.
 Ludwig will compose a deep learning model accordingly and train it for you.
 
-Currently the available datatypes in Ludwig are:
+Currently, the available datatypes in Ludwig are:
 
 - binary
-- numerical
+- number
 - category
 - set
 - bag
@@ -104,24 +118,40 @@ Currently the available datatypes in Ludwig are:
 - text
 - timeseries
 - image
+- audio
+- date
+- h3
+- vector
 
-The model definition can contain additional information, in particular how to preprocess each column in the CSV, which encoder and decoder to use for each one, feature hyperparameters and training parameters.
+By choosing different datatype for inputs and outputs, users can solve many different tasks, for instance:
+
+- text input + category output = text classifier
+- image input + category output = image classifier
+- image input + text output = image captioning
+- audio input + binary output = speaker verification
+- text input + sequence output = named entity recognition / summarization
+- category, number and binary inputs + number output = regression
+- timeseries input + number output = forecasting model
+- category, number and binary inputs + binary output = fraud detection
+
+take a look at the [Examples](https://ludwig-ai.github.io/ludwig-docs/latest/examples/) to see how you can use Ludwig for several more tasks.
+
+The config can contain additional information, in particular how to preprocess each column in the data, which encoder and decoder to use for each one, architectural  and training parameters, hyperparameters to optimize.
 This allows ease of use for novices and flexibility for experts.
 
-
-### Training
+## Training
 
 For example, given a text classification dataset like the following:
 
-| doc_text                              | class    |
-|---------------------------------------|----------|
-| Former president Barack Obama ...     | politics |
+| doc_text                             | class    |
+| ------------------------------------ | -------- |
+| Former president Barack Obama ...    | politics |
 | Juventus hired Cristiano Ronaldo ... | sport    |
-| LeBron James joins the Lakers ...     | sport    |
-| ...                                   | ...      |
+| LeBron James joins the Lakers ...    | sport    |
+| ...                                  | ...      |
 
 you want to learn a model that uses the content of the `doc_text` column as input to predict the values in the `class` column.
-You can use the following model definition:
+You can use the following config:
 
 ```yaml
 {input_features: [{name: doc_text, type: text}], output_features: [{name: class, type: category}]}
@@ -130,63 +160,79 @@ You can use the following model definition:
 and start the training typing the following command in your console:
 
 ```
-ludwig train --data_csv path/to/file.csv --model_definition "{input_features: [{name: doc_text, type: text}], output_features: [{name: class, type: category}]}"
+ludwig train --dataset path/to/file.csv --config_str "{input_features: [{name: doc_text, type: text}], output_features: [{name: class, type: category}]}"
 ```
 
-and Ludwig will perform a random split of the data, preprocess it, build a WordCNN model (the default for text features) that decodes output classes through a softmax classifier, train the model on the training set until the accuracy on the validation set stops improving.
-Training progress will be displayed in the console, but TensorBoard can also be used.
+where `path/to/file.csv` is the path to a UTF-8 encoded CSV file containing the dataset in the previous table (many other data formats are supported).
+Ludwig will:
 
-If you prefer to use an RNN encoder and increase the number of epochs you want the model to train for, all you have to do is to change the model definition to:
+1. Perform a random split of the data.
+1. Preprocess the dataset.
+1. Build a ParallelCNN model (the default for text features) that decodes output classes through a softmax classifier.
+1. Train the model on the training set until the performance on the validation set stops improving.
+
+Training progress will be displayed in the console, but the TensorBoard can also be used.
+
+If you prefer to use an RNN encoder and increase the number of epochs to train for, all you have to do is to change the config to:
 
 ```yaml
 {input_features: [{name: doc_text, type: text, encoder: rnn}], output_features: [{name: class, type: category}], training: {epochs: 50}}
 ```
 
-Refer to the [User Guide](http://uber.github.io/ludwig/user_guide/) to find out all the options available to you in the model definition and take a look at the [Examples](http://uber.github.io/ludwig/examples/) to see how you can use Ludwig for several different tasks.
+Refer to [Configuration](https://ludwig-ai.github.io/ludwig-docs/latest/configuration/) to find out all the
+options available to you in the config and take a look at [Examples](https://ludwig-ai.github.io/ludwig-docs/latest/examples/)
+to see how you can use Ludwig for several example tasks.
 
-After training, Ludwig will create a directory under `results` containing the trained model with its hyperparameters and summary statistics of the training process.
-You can visualize them using one of the several visualization options available in the `visualize` tool, for instance:
-
-```
-ludwig visualize --visualization learning_curves --training_statistics path/to//training_statistics.json
-```
-
-The commands will display a graph that looks like the following, where you can see loss and accuracy as functions of train iteration number:
-
-![Learning Curves](https://raw.githubusercontent.com/uber/ludwig/master/docs/images/getting_started_learning_curves.png "Learning Curves")
-
-Several visualizations are available, please refer to [Visualizations](http://uber.github.io/ludwig/user_guide/#visualizations) for more details.
-
-
-### Distributed Training
-
-You can distribute the training of your models using [Horovod](https://github.com/uber/horovod), which allows to train on a single machine with multiple GPUs as well as on multiple machines with multiple GPUs.
-Refer to the [User Guide](http://uber.github.io/ludwig/user_guide/#distributed-training) for more details.
-
-
-### Predict
-
-If you have new data and you want your previously trained model to predict target output values, you can type the following command in your console:
+After training, Ludwig will create a `results` directory containing the trained model with its hyperparameters and
+summary statistics of the training process. You can visualize them using one of the several visualization options
+available in the `visualize` tool, for instance:
 
 ```
-ludwig predict --data_csv path/to/data.csv --model_path /path/to/model
+ludwig visualize --visualization learning_curves --training_statistics path/to/training_statistics.json
 ```
 
-Running this command will return model predictions and some test performance statistics if the dataset contains ground truth information to compare to.
-Those can be visualized by the `visualize` tool, which can also be used to compare performances and predictions of different models, for instance:
+This command will display a graph like the following, where you can see loss and accuracy during the training process:
+
+![Learning Curves](https://github.com/ludwig-ai/ludwig-docs/raw/master/docs/images/getting_started_learning_curves.png "Learning Curves")
+
+Several more visualizations are available, please refer
+to [Visualizations](https://ludwig-ai.github.io/ludwig-docs/latest/user_guide/visualizations/) for more details.
+
+## Distributed Training
+
+You can distribute the training of your models using [Horovod](https://github.com/horovod/horovod), which allows
+training on a single machine with multiple GPUs as well as on multiple machines with multiple GPUs. Refer to
+the [User Guide](https://ludwig-ai.github.io/ludwig-docs/latest/user_guide/distributed_training/) for full details.
+
+## Prediction and Evaluation
+
+If you want your previously trained model to predict target output values on new data, you can type the following command in your console:
 
 ```
-ludwig visualize --visualization compare_performance --test_stats path/to/test_stats_model_1.json path/to/test_stats_model_2.json
+ludwig predict --dataset path/to/data.csv --model_path /path/to/model
 ```
 
-will return a bar plot comparing the models on different measures:
+Running this command will return model predictions.
 
-![Performance Comparison](https://raw.githubusercontent.com/uber/ludwig/master/docs/images/compare_performance.png "Performance Comparison")
+If your dataset also contains ground truth values of the target outputs, you can compare them to the predictions obtained from the model to evaluate the model performance.
+
+```
+ludwig evaluate --dataset path/to/data.csv --model_path /path/to/model
+```
+
+This will produce evaluation performance statistics that can be visualized by the `visualize` tool, which can also be used to compare performances and predictions of different models, for instance:
+
+```
+ludwig visualize --visualization compare_performance --test_statistics path/to/test_statistics_model_1.json path/to/test_statistics_model_2.json
+```
+
+will return a bar plot comparing the models on different metrics:
+
+![Performance Comparison](https://github.com/ludwig-ai/ludwig-docs/raw/master/docs/images/compare_performance.png "Performance Comparison")
 
 A handy `ludwig experiment` command that performs training and prediction one after the other is also available.
 
-
-### Programmatic API
+## Programmatic API
 
 Ludwig also provides a simple programmatic API that allows you to train or load a model and use it to obtain predictions on new data:
 
@@ -194,35 +240,46 @@ Ludwig also provides a simple programmatic API that allows you to train or load 
 from ludwig.api import LudwigModel
 
 # train a model
-model_definition = {...}
-model = LudwigModel(model_definition)
-train_stats = model.train(training_dataframe)
+config = {...}
+model = LudwigModel(config)
+train_stats = model.train(training_data)
 
 # or load a model
 model = LudwigModel.load(model_path)
 
 # obtain predictions
-predictions = model.predict(test_dataframe)
-
-model.close()
+predictions = model.predict(test_data)
 ```
 
-`model_definition` is a dictionary containing the same information of the YAML file.
-More details are provided in the [User Guide](http://uber.github.io/ludwig/user_guide/) and in the [API documentation](http://uber.github.io/ludwig/api/).
+`config` containing the same information of the YAML file provided to the command line interface. More details are
+provided in the [configuration documentation](https://ludwig-ai.github.io/ludwig-docs/latest/configuration/) and in
+the [API documentation](https://ludwig-ai.github.io/ludwig-docs/latest/user_guide/api/LudwigModel/).
 
+## Extensibility
 
-Extensibility
-=============
+Ludwig is built from the ground up with extensibility in mind. It is easy to add
+an additional datatype that is not currently supported by adding a
+datatype-specific implementation of abstract classes that contain functions to
+preprocess the data, encode it, and decode it.
 
-Ludwig is built from the ground up with extensibility in mind.
-It is easy to add additional datatypes by adding a datatype-specific implementation of abstract classes which contain functions to preprocess, encode, and decode the data.
+Furthermore, new models, with their own specific hyperparameters, can be easily
+added by implementing a class that accepts tensors (of a specific rank,
+depending on the datatype) as inputs and provides tensors as output. This
+encourages reuse and sharing new models with the community. Refer to
+the [Developer Guide](https://ludwig-ai.github.io/ludwig-docs/latest/developer_guide/)
+for further details.
 
-Furthermore, new models, with their own specific hyperparameters, can be easily added by implementing a class that accepts tensors (of a specific rank, depending on the datatype) as inputs and provides tensors as output.
-This encourages reuse and sharing new models with the community.
-Refer to the [Developer Guide](http://uber.github.io/ludwig/developer_guide/) for further details.
+## Full documentation
 
+You can find the full documentation [here](https://ludwig-ai.github.io/ludwig-docs/).
 
-Full documentation
-------------------
+## License
 
-You can find the full documentation [here](http://uber.github.io/ludwig/).
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fuber%2Fludwig.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fuber%2Fludwig?ref=badge_large)
+
+## Getting Involved
+
+- [Slack](https://join.slack.com/t/ludwig-ai/shared_invite/zt-mrxo87w6-DlX5~73T2B4v_g6jj0pJcQ)
+- [Twitter](https://twitter.com/ludwig_ai)
+- [Medium](https://medium.com/ludwig-ai)
+- [GitHub Issues](https://github.com/ludwig-ai/ludwig/issues)

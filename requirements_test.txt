@@ -1,0 +1,11 @@
+pytest
+pytest-timeout
+six>=1.13.0
+wandb<0.12.11
+comet_ml
+mlflow
+whylogs
+
+# For testing BOHB with Ray Tune
+hpbandster
+ConfigSpace
