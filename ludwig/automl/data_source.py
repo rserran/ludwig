@@ -3,6 +3,7 @@ from typing import List, Tuple
 
 from ludwig.automl.utils import avg_num_tokens
 from ludwig.utils.image_utils import is_image_score
+from ludwig.utils.types import DataFrame
 
 
 class DataSource(ABC):
@@ -36,9 +37,8 @@ class DataSource(ABC):
         raise NotImplementedError()
 
 
-class DataframeSource(DataSource):
-    def __init__(self, df):
-        self.df = df
+class DataframeSourceMixin:
+    df: DataFrame
 
     @property
     def columns(self) -> List[str]:
@@ -56,7 +56,7 @@ class DataframeSource(DataSource):
         return len(self.df[column].notnull())
 
     def get_image_values(self, column: str, sample_size: int = 10) -> int:
-        return int(sum(is_image_score(None, x) for x in self.df[column].head(sample_size)))
+        return int(sum(is_image_score(None, x, column) for x in self.df[column].head(sample_size)))
 
     def get_avg_num_tokens(self, column: str) -> int:
         return avg_num_tokens(self.df[column])
@@ -66,3 +66,8 @@ class DataframeSource(DataSource):
 
     def __len__(self) -> int:
         return len(self.df)
+
+
+class DataframeSource(DataframeSourceMixin, DataSource):
+    def __init__(self, df):
+        self.df = df

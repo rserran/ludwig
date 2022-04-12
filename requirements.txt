@@ -13,14 +13,14 @@ absl-py
 kaggle
 requests
 tables
-fsspec
+fsspec[http]
 dataclasses-json
 jsonschema
 marshmallow
 marshmallow-jsonschema
 marshmallow-dataclass
 tensorboard
-torchmetrics>=0.6.0,<0.7
+torchmetrics
 torchinfo
 filelock
 

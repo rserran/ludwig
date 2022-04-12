@@ -22,10 +22,10 @@ from ludwig.hyperopt.sampling import HyperoptSampler, RayTuneSampler
 from ludwig.hyperopt.utils import load_json_values
 from ludwig.modules.metric_modules import get_best_function
 from ludwig.utils import metric_utils
-from ludwig.utils.data_utils import NumpyEncoder
+from ludwig.utils.data_utils import hash_dict, NumpyEncoder
 from ludwig.utils.defaults import default_random_seed
 from ludwig.utils.fs_utils import has_remote_protocol
-from ludwig.utils.misc_utils import get_from_registry, hash_dict
+from ludwig.utils.misc_utils import get_from_registry
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,9 @@ class HyperoptExecutor(ABC):
         if self._has_metric(train_stats, VALIDATION):
             logger.info("Returning metric score from training (validation) statistics")
             return self.get_metric_score_from_train_stats(train_stats, VALIDATION)
+        elif self._has_metric(train_stats, TRAINING):
+            logger.info("Returning metric score from training split statistics, " "as no validation was given")
+            return self.get_metric_score_from_train_stats(train_stats, TRAINING)
         else:
             raise RuntimeError("Unable to obtain metric score from missing training (validation) statistics")
 
@@ -134,11 +137,11 @@ class HyperoptExecutor(ABC):
         best_function = get_best_function(self.metric)
 
         # results of the model with highest validation test performance
-        epoch_best_vali_metric, best_vali_metric = best_function(
+        epoch_best_validation_metric, best_validation_metric = best_function(
             enumerate(validation_field_result[self.metric]), key=lambda pair: pair[1]
         )
 
-        return best_vali_metric
+        return best_validation_metric
 
     def sort_hyperopt_results(self, hyperopt_results):
         return sorted(
@@ -451,7 +454,7 @@ class RayTuneExecutor(HyperoptExecutor):
             ray_queue = None
 
         def checkpoint(progress_tracker, save_path):
-            with tune.checkpoint_dir(step=progress_tracker.steps) as checkpoint_dir:
+            with tune.checkpoint_dir(step=progress_tracker.tune_checkpoint_num) as checkpoint_dir:
                 checkpoint_model = os.path.join(checkpoint_dir, "model")
                 # shutil.copytree(save_path, checkpoint_model)
                 # Note: A previous implementation used shutil.copytree()
@@ -472,7 +475,7 @@ class RayTuneExecutor(HyperoptExecutor):
             # We reduce the dictionary of TrainerMetrics to a simple list of floats for interfacing with Ray Tune.
             train_stats = {
                 TRAINING: metric_utils.reduce_trainer_metrics_dict(progress_tracker.train_metrics),
-                VALIDATION: metric_utils.reduce_trainer_metrics_dict(progress_tracker.vali_metrics),
+                VALIDATION: metric_utils.reduce_trainer_metrics_dict(progress_tracker.validation_metrics),
                 TEST: metric_utils.reduce_trainer_metrics_dict(progress_tracker.test_metrics),
             }
 
@@ -520,6 +523,7 @@ class RayTuneExecutor(HyperoptExecutor):
                         sync_client.wait()
 
             def on_eval_end(self, trainer, progress_tracker, save_path):
+                progress_tracker.tune_checkpoint_num += 1
                 self._checkpoint_progress(trainer, progress_tracker, save_path)
                 # Note: Calling tune.report in both on_eval_end() and on_epoch_end() can cause multiprocessing issues
                 # for some ray samplers if evaluation happens precisely every epoch.

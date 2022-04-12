@@ -42,3 +42,19 @@ class AGNews(UncompressedFileDownloadMixin, MultifileJoinProcessMixin, CSVLoadMi
         # 1-World, 2-Sports, 3-Business, 4-Science/Tech
         file_df.columns = ["class_index", "title", "description"]
         return file_df
+
+    def process_downloaded_dataset(self):
+        super().process_downloaded_dataset(header=None)
+        processed_df = pd.read_csv(os.path.join(self.processed_dataset_path, self.csv_filename))
+        # Maps class_index to class name.
+        class_names = ["", "world", "sports", "business", "sci_tech"]
+        # Adds new column 'class' by mapping class indexes to strings.
+        processed_df["class"] = processed_df.class_index.apply(lambda i: class_names[i])
+        # Agnews has no validation split, only train and test (0, 2). For convenience, we'll designate the first 5% of
+        # each class from the training set as the validation set.
+        val_set_n = int((len(processed_df) * 0.05) // len(class_names))  # rows from each class in validation set.
+        for ci in range(1, 5):
+            # For each class, reassign the first val_set_n rows of the training set to validation set.
+            train_rows = processed_df[(processed_df.split == 0) & (processed_df.class_index == ci)].index
+            processed_df.loc[train_rows[:val_set_n], "split"] = 1
+        processed_df.to_csv(os.path.join(self.processed_dataset_path, self.csv_filename), index=False)

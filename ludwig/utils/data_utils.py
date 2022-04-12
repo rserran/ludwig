@@ -13,28 +13,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+import base64
 import collections.abc
+import contextlib
 import csv
 import functools
+import hashlib
 import json
 import logging
+import os
 import os.path
 import pickle
 import random
 import re
+import tempfile
 from itertools import islice
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import yaml
+from fsspec.config import conf, set_conf_files
 from pandas.errors import ParserError
 from sklearn.model_selection import KFold
 
+from ludwig.data.cache.types import CacheableDataset
 from ludwig.utils.fs_utils import download_h5, open_file, upload_h5
 from ludwig.utils.misc_utils import get_from_registry
 
 try:
+    import dask
     import dask.dataframe as dd
 
     DASK_DF_FORMATS = {dd.core.DataFrame}
@@ -42,7 +50,7 @@ except ImportError:
     DASK_DF_FORMATS = set()
     dd = None
 
-from ludwig.constants import PREPROCESSING, PROC_COLUMN, SPLIT
+from ludwig.constants import PREPROCESSING, SPLIT
 from ludwig.globals import MODEL_HYPERPARAMETERS_FILE_NAME, MODEL_WEIGHTS_FILE_NAME, TRAIN_SET_METADATA_FILE_NAME
 
 logger = logging.getLogger(__name__)
@@ -84,6 +92,7 @@ CACHEABLE_FORMATS = set.union(
         SAS_FORMATS,
         SPSS_FORMATS,
         STATA_FORMATS,
+        DATAFRAME_FORMATS,
     )
 )
 
@@ -107,6 +116,19 @@ def load_csv(data_fp):
     return data
 
 
+# Decorator used to encourage Dask on Ray to spread out data loading across workers
+def spread(fn):
+    def wrapped_fn(*args, **kwargs):
+        if dd is None or not hasattr(dask, "annotate"):
+            return fn(*args, **kwargs)
+
+        with dask.annotate(ray_remote_args=dict(scheduling_strategy="SPREAD")):
+            return fn(*args, **kwargs)
+
+    return wrapped_fn
+
+
+@spread
 def read_xsv(data_fp, df_lib=PANDAS_DF, separator=",", header=0, nrows=None, skiprows=None):
     """Helper method to read a csv file. Wraps around pd.read_csv to handle some exceptions. Can extend to cover
     cases as necessary.
@@ -145,6 +167,7 @@ read_csv = functools.partial(read_xsv, separator=",")
 read_tsv = functools.partial(read_xsv, separator="\t")
 
 
+@spread
 def read_json(data_fp, df_lib, normalize=False):
     if normalize:
         return df_lib.json_normalize(load_json(data_fp))
@@ -152,10 +175,12 @@ def read_json(data_fp, df_lib, normalize=False):
         return df_lib.read_json(data_fp)
 
 
+@spread
 def read_jsonl(data_fp, df_lib):
     return df_lib.read_json(data_fp, lines=True)
 
 
+@spread
 def read_excel(data_fp, df_lib):
     fp_split = os.path.splitext(data_fp)
     if fp_split[1] == ".xls":
@@ -165,42 +190,52 @@ def read_excel(data_fp, df_lib):
     return df_lib.read_excel(data_fp, engine=excel_engine)
 
 
+@spread
 def read_parquet(data_fp, df_lib):
     return df_lib.read_parquet(data_fp)
 
 
+@spread
 def read_pickle(data_fp, df_lib):
     return df_lib.read_pickle(data_fp)
 
 
+@spread
 def read_fwf(data_fp, df_lib):
     return df_lib.read_fwf(data_fp)
 
 
+@spread
 def read_feather(data_fp, df_lib):
     return df_lib.read_feather(data_fp)
 
 
+@spread
 def read_html(data_fp, df_lib):
     return df_lib.read_html(data_fp)[0]
 
 
+@spread
 def read_orc(data_fp, df_lib):
     return df_lib.read_orc(data_fp)
 
 
+@spread
 def read_sas(data_fp, df_lib):
     return df_lib.read_sas(data_fp)
 
 
+@spread
 def read_spss(data_fp, df_lib):
     return df_lib.read_spss(data_fp)
 
 
+@spread
 def read_stata(data_fp, df_lib):
     return df_lib.read_stata(data_fp)
 
 
+@spread
 def read_hdf5(data_fp, **kwargs):
     return load_hdf5(data_fp, clean_cols=True)
 
@@ -242,6 +277,14 @@ def load_json(data_fp):
 def save_json(data_fp, data, sort_keys=True, indent=4):
     with open_file(data_fp, "w") as output_file:
         json.dump(data, output_file, cls=NumpyEncoder, sort_keys=sort_keys, indent=indent)
+
+
+def hash_dict(d: dict, max_length: Union[int, None] = 6) -> bytes:
+    s = json.dumps(d, cls=NumpyEncoder, sort_keys=True, ensure_ascii=True)
+    h = hashlib.md5(s.encode())
+    d = h.digest()
+    b = base64.b64encode(d, altchars=b"__")
+    return b[:max_length]
 
 
 def to_json_dict(d):
@@ -509,10 +552,6 @@ def class_counts(dataset, labels_field):
     return np.bincount(dataset[labels_field].flatten()).tolist()
 
 
-def text_feature_data_field(text_feature):
-    return text_feature[PROC_COLUMN] + "_" + text_feature["level"]
-
-
 def load_from_file(file_name, field=None, dtype=int, ground_truth_split=2):
     """Load experiment data from supported file formats.
 
@@ -659,7 +698,9 @@ def clear_data_cache():
 
 
 def figure_data_format_dataset(dataset):
-    if isinstance(dataset, pd.DataFrame):
+    if isinstance(dataset, CacheableDataset):
+        return figure_data_format_dataset(dataset.unwrap())
+    elif isinstance(dataset, pd.DataFrame):
         return pd.DataFrame
     elif dd and isinstance(dataset, dd.core.DataFrame):
         return dd.core.DataFrame
@@ -806,3 +847,27 @@ def load_dataset(dataset, data_format=None, df_lib=PANDAS_DF):
         return data_reader(dataset, df_lib)
     else:
         ValueError(f"{data_format} format is not supported")
+
+
+@contextlib.contextmanager
+def use_credentials(creds):
+    if creds is None:
+        with contextlib.nullcontext():
+            yield
+            return
+
+    # https://filesystem-spec.readthedocs.io/en/latest/features.html#configuration
+    # This allows us to avoid having to plumb the `storage_options` kwargs through
+    # every remote FS call in Ludwig. The downside is that this implementation is
+    # not threadsafe, but in practice we should not be multithreading this anyway.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        fname = os.path.join(tmpdir, "conf.json")
+        with open(fname, "w") as f:
+            json.dump(creds, f)
+
+        conf.clear()
+        set_conf_files(tmpdir, conf)
+        try:
+            yield
+        finally:
+            conf.clear()
